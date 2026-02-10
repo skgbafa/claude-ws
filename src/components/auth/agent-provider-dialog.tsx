@@ -16,13 +16,14 @@ import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 
 // Default values for provider config
+// Model IDs from: https://platform.claude.com/docs/en/about-claude/models/overview
 const DEFAULT_CONFIG = {
   ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
   ANTHROPIC_PROXIED_BASE_URL: '',  // Empty means use ANTHROPIC_BASE_URL directly
-  ANTHROPIC_MODEL: 'opus',
-  ANTHROPIC_DEFAULT_HAIKU_MODEL: 'haiku',
-  ANTHROPIC_DEFAULT_SONNET_MODEL: 'sonnet',
-  ANTHROPIC_DEFAULT_OPUS_MODEL: 'opus',
+  ANTHROPIC_MODEL: 'claude-opus-4-6',
+  ANTHROPIC_DEFAULT_HAIKU_MODEL: 'claude-haiku-4-5-20251001',
+  ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-4-5-20250929',
+  ANTHROPIC_DEFAULT_OPUS_MODEL: 'claude-opus-4-6',
   API_TIMEOUT_MS: '3000000',
 };
 
