@@ -31,6 +31,12 @@ export const AVAILABLE_MODELS: Model[] = [
     description: 'Fastest model',
     tier: 'haiku',
   },
+  {
+    id: 'claude-3-5-sonnet-20241022',
+    name: 'Claude 3.5 Sonnet',
+    description: 'Previous Sonnet model',
+    tier: 'sonnet',
+  },
 ];
 
 // Default model ID (fallback when no env/cache)
