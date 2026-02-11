@@ -104,8 +104,15 @@ export async function GET() {
         .limit(1);
 
       if (cached.length > 0 && cached[0].value) {
-        currentModelId = cached[0].value;
-        source = 'cached';
+        // Validate cached model still exists in available models
+        const cachedId = cached[0].value;
+        const stillValid = models.some((m) => m.id === cachedId);
+        if (stillValid) {
+          currentModelId = cachedId;
+          source = 'cached';
+        } else {
+          log.info({ staleModel: cachedId, newDefault: DEFAULT_MODEL_ID }, 'Cached model no longer available, resetting to default');
+        }
       }
     }
 

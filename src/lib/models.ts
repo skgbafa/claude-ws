@@ -31,19 +31,6 @@ export const AVAILABLE_MODELS: Model[] = [
     description: 'Fastest model',
     tier: 'haiku',
   },
-  // Legacy models
-  {
-    id: 'claude-opus-4-5-20251101',
-    name: 'Claude Opus 4.5',
-    description: 'Previous Opus model',
-    tier: 'opus',
-  },
-  {
-    id: 'claude-sonnet-4-20250514',
-    name: 'Claude Sonnet 4',
-    description: 'Previous Sonnet model',
-    tier: 'sonnet',
-  },
 ];
 
 // Default model ID (fallback when no env/cache)
