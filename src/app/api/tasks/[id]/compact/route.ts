@@ -32,10 +32,7 @@ export async function POST(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    const sessionId = await sessionManager.getLastSessionId(taskId);
-    if (!sessionId) {
-      return NextResponse.json({ error: 'No session to compact' }, { status: 400 });
-    }
+    const conversationSummary = await sessionManager.getConversationSummary(taskId);
 
     const attemptId = nanoid();
     await db.insert(schema.attempts).values({
@@ -51,7 +48,7 @@ export async function POST(
     agentManager.compact({
       attemptId,
       projectPath: project.path,
-      sessionId,
+      conversationSummary,
     });
 
     return NextResponse.json({ success: true, attemptId });

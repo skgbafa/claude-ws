@@ -849,18 +849,22 @@ Your task is INCOMPLETE until:\n1. File exists with valid content\n2. You have R
   }
 
   /**
-   * Compact a conversation by requesting a summary
-   * Creates a new query with resume to summarize and continue
+   * Compact a conversation by starting a fresh session with context summary
+   * Cannot resume the old session (it's at/near context limit), so we start
+   * fresh and carry forward key context via the prompt.
    */
-  async compact(options: { attemptId: string; projectPath: string; sessionId: string }): Promise<void> {
-    const { attemptId, projectPath, sessionId } = options;
-    const compactPrompt = 'Please provide a brief summary of our conversation so far. Focus on: key decisions made, current state of the work, and any pending items. Then continue from this summarized context.';
+  async compact(options: { attemptId: string; projectPath: string; conversationSummary?: string }): Promise<void> {
+    const { attemptId, projectPath, conversationSummary } = options;
 
+    const compactPrompt = conversationSummary
+      ? `You are continuing a previous conversation that reached the context limit. Here is a summary of the previous context:\n\n${conversationSummary}\n\nPlease acknowledge this context briefly and let the user know you're ready to continue.`
+      : 'A previous conversation reached the context limit. Please let the user know you are ready to continue with a fresh context.';
+
+    // Start a FRESH session — do NOT resume the old session since it's at/near the context limit
     await this.start({
       attemptId,
       projectPath,
       prompt: compactPrompt,
-      sessionOptions: { resume: sessionId },
       maxTurns: 1,
     });
   }

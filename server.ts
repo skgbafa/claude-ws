@@ -538,8 +538,7 @@ app.prepare().then(async () => {
         });
         if (!project) { socket.emit('error', { message: 'Project not found' }); return; }
 
-        const sessionId = await sessionManager.getLastSessionId(compactTaskId);
-        if (!sessionId) { socket.emit('error', { message: 'No session to compact' }); return; }
+        const conversationSummary = await sessionManager.getConversationSummary(compactTaskId);
 
         const compactAttemptId = nanoid();
         await db.insert(schema.attempts).values({
@@ -557,7 +556,7 @@ app.prepare().then(async () => {
         agentManager.compact({
           attemptId: compactAttemptId,
           projectPath: project.path,
-          sessionId,
+          conversationSummary,
         });
       } catch (error) {
         log.error({ error }, '[Server] Manual compact failed');
@@ -1151,7 +1150,7 @@ app.prepare().then(async () => {
     }
 
     // Auto-compact check: if context exceeded threshold and auto-compact is enabled
-    if (status === 'completed' && usageStats?.contextHealth?.shouldCompact) {
+    if (status === 'completed' && usageStats?.contextHealth?.shouldCompact && attempt?.taskId) {
       try {
         const autoCompactSetting = await db
           .select()
@@ -1162,31 +1161,30 @@ app.prepare().then(async () => {
         const autoCompactEnabled = autoCompactSetting.length > 0 && autoCompactSetting[0].value === 'true';
 
         if (autoCompactEnabled) {
-          const sessionId = await sessionManager.getSessionId(attemptId);
-          if (sessionId && attempt?.taskId) {
-            const project = await db.query.projects.findFirst({
-              where: eq(schema.projects.id, (await db.query.tasks.findFirst({ where: eq(schema.tasks.id, attempt.taskId) }))!.projectId),
+          const project = await db.query.projects.findFirst({
+            where: eq(schema.projects.id, (await db.query.tasks.findFirst({ where: eq(schema.tasks.id, attempt.taskId) }))!.projectId),
+          });
+
+          if (project) {
+            const conversationSummary = await sessionManager.getConversationSummary(attempt.taskId);
+
+            const compactAttemptId = nanoid();
+            await db.insert(schema.attempts).values({
+              id: compactAttemptId,
+              taskId: attempt.taskId,
+              prompt: 'Auto-compact: summarize conversation context',
+              displayPrompt: 'Auto-compacting conversation...',
+              status: 'running',
             });
 
-            if (project) {
-              const compactAttemptId = nanoid();
-              await db.insert(schema.attempts).values({
-                id: compactAttemptId,
-                taskId: attempt.taskId,
-                prompt: 'Auto-compact: summarize conversation context',
-                displayPrompt: 'Auto-compacting conversation...',
-                status: 'running',
-              });
+            log.info({ attemptId: compactAttemptId, taskId: attempt.taskId }, '[Server] Auto-compacting conversation');
+            io.to(`attempt:${attemptId}`).emit('context:compacting', { attemptId: compactAttemptId, taskId: attempt.taskId });
 
-              log.info({ attemptId: compactAttemptId, taskId: attempt.taskId }, '[Server] Auto-compacting conversation');
-              io.to(`attempt:${attemptId}`).emit('context:compacting', { attemptId: compactAttemptId, taskId: attempt.taskId });
-
-              agentManager.compact({
-                attemptId: compactAttemptId,
-                projectPath: project.path,
-                sessionId,
-              });
-            }
+            agentManager.compact({
+              attemptId: compactAttemptId,
+              projectPath: project.path,
+              conversationSummary,
+            });
           }
         }
       } catch (compactError) {
