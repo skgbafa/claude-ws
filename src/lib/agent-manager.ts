@@ -225,6 +225,7 @@ interface AgentEvents {
   question: (data: { attemptId: string; toolUseId: string; questions: unknown[] }) => void;
   backgroundShell: (data: { attemptId: string; shell: BackgroundShellInfo }) => void;
   trackedProcess: (data: { attemptId: string; pid: number; command: string; logFile?: string }) => void;
+  promptTooLong: (data: { attemptId: string }) => void;
 }
 
 export interface AgentStartOptions {
@@ -751,6 +752,13 @@ Your task is INCOMPLETE until:\n1. File exists with valid content\n2. You have R
       }
       this.emit('stderr', { attemptId, content: `${errorName}: ${errorMessage}` });
 
+      // Detect "prompt too long" errors for auto-compact handling
+      const isPromptTooLong = errorMessage.toLowerCase().includes('prompt is too long') ||
+                              errorMessage.toLowerCase().includes('request too large');
+      if (isPromptTooLong) {
+        this.emit('promptTooLong', { attemptId });
+      }
+
       // Determine exit code based on error type
       const code = controller.signal.aborted ? null : 1;
 
@@ -838,6 +846,23 @@ Your task is INCOMPLETE until:\n1. File exists with valid content\n2. You have R
     // This will be handled by creating a new attempt in server.ts
     // Return false to signal caller should create continuation attempt
     return false;
+  }
+
+  /**
+   * Compact a conversation by requesting a summary
+   * Creates a new query with resume to summarize and continue
+   */
+  async compact(options: { attemptId: string; projectPath: string; sessionId: string }): Promise<void> {
+    const { attemptId, projectPath, sessionId } = options;
+    const compactPrompt = 'Please provide a brief summary of our conversation so far. Focus on: key decisions made, current state of the work, and any pending items. Then continue from this summarized context.';
+
+    await this.start({
+      attemptId,
+      projectPath,
+      prompt: compactPrompt,
+      sessionOptions: { resume: sessionId },
+      maxTurns: 1,
+    });
   }
 
   /**
