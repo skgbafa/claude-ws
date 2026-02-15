@@ -206,22 +206,19 @@ export function TaskCard({ task, attemptCount = 0, searchQuery = '', isMobile = 
           )}
 
           {/* Footer: Metadata */}
-          {(attemptCount > 0 || task.updatedAt) && (
+          {attemptCount > 0 && (
             <div className="mt-2 pt-1.5 border-t border-border/50 flex items-center gap-2">
-              {attemptCount > 0 && (
-                <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                  <MessageSquare className="size-3" />
-                  <span>{attemptCount}</span>
-                </div>
-              )}
-              {task.updatedAt && (
-                <span
-                  className="ml-auto text-[10px] text-muted-foreground/70"
-                  title={formatAbsoluteTime(task.updatedAt)}
-                >
-                  <RelativeTime timestamp={task.updatedAt} />
-                </span>
-              )}
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <MessageSquare className="size-3" />
+                <span>{attemptCount}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Timestamp - visible on card hover */}
+          {task.updatedAt && (
+            <div className="mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-muted-foreground/70">
+              <RelativeTime timestamp={task.updatedAt} />
             </div>
           )}
         </div>
