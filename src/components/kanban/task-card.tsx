@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Task } from '@/types';
@@ -8,6 +9,33 @@ import { GripVertical, MessageSquare, Trash2, Search } from 'lucide-react';
 import { useTaskStore } from '@/stores/task-store';
 import { useProjectStore } from '@/stores/project-store';
 import type { ChatHistoryMatch } from '@/hooks/use-chat-history-search';
+
+function formatRelativeTime(timestamp: number): string {
+  const now = Date.now();
+  const diffMs = now - timestamp;
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHr = Math.floor(diffMs / 3600000);
+  const diffDay = Math.floor(diffMs / 86400000);
+
+  if (diffMin < 1) return 'just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffDay < 30) return `${diffDay}d ago`;
+  return new Date(timestamp).toLocaleDateString();
+}
+
+function formatAbsoluteTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleString();
+}
+
+function RelativeTime({ timestamp }: { timestamp: number }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => setTick((t) => t + 1), 60000);
+    return () => clearInterval(interval);
+  }, []);
+  return <>{formatRelativeTime(timestamp)}</>;
+}
 
 interface TaskCardProps {
   task: Task;
@@ -178,12 +206,22 @@ export function TaskCard({ task, attemptCount = 0, searchQuery = '', isMobile = 
           )}
 
           {/* Footer: Metadata */}
-          {attemptCount > 0 && (
+          {(attemptCount > 0 || task.updatedAt) && (
             <div className="mt-2 pt-1.5 border-t border-border/50 flex items-center gap-2">
-              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                <MessageSquare className="size-3" />
-                <span>{attemptCount}</span>
-              </div>
+              {attemptCount > 0 && (
+                <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                  <MessageSquare className="size-3" />
+                  <span>{attemptCount}</span>
+                </div>
+              )}
+              {task.updatedAt && (
+                <span
+                  className="ml-auto text-[10px] text-muted-foreground/70"
+                  title={formatAbsoluteTime(task.updatedAt)}
+                >
+                  <RelativeTime timestamp={task.updatedAt} />
+                </span>
+              )}
             </div>
           )}
         </div>
