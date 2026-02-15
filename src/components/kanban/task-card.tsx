@@ -215,10 +215,11 @@ export function TaskCard({ task, attemptCount = 0, searchQuery = '', isMobile = 
             </div>
           )}
 
-          {/* Timestamp - visible on card hover */}
+          {/* Timestamp - shows relative time, switches to exact time on card hover */}
           {task.updatedAt && (
-            <div className="mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-muted-foreground/70">
-              <RelativeTime timestamp={task.updatedAt} />
+            <div className="mt-1.5 text-[10px] text-muted-foreground/70">
+              <span className="group-hover:hidden"><RelativeTime timestamp={task.updatedAt} /></span>
+              <span className="hidden group-hover:inline">{formatAbsoluteTime(task.updatedAt)}</span>
             </div>
           )}
         </div>
