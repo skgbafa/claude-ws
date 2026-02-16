@@ -1,42 +1,31 @@
 'use client';
 
 import { useState } from 'react';
-import { MessageCircleQuestion, ChevronDown, ChevronRight, Check, X } from 'lucide-react';
+import { MessageCircleQuestion, ChevronDown, ChevronRight, X, ExternalLink } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { QuestionPrompt } from '@/components/task/interactive-command/question-prompt';
 import { useQuestionsStore, type PendingQuestionEntry } from '@/stores/questions-store';
 import { useTaskStore } from '@/stores/task-store';
 import { cn } from '@/lib/utils';
 
-interface QuestionOption {
-  label: string;
-  description: string;
-}
-
 interface Question {
   question: string;
   header: string;
-  options: QuestionOption[];
+  options: Array<{ label: string; description: string }>;
   multiSelect: boolean;
 }
 
 function QuestionEntryItem({ entry, onAnswered }: { entry: PendingQuestionEntry; onAnswered: () => void }) {
   const [expanded, setExpanded] = useState(false);
-  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const { selectTask } = useTaskStore();
   const { closePanel } = useQuestionsStore();
 
   const questions = entry.questions as Question[];
   const firstQuestion = questions[0];
-  const allAnswered = questions.every((q) => selectedAnswers[q.question] !== undefined);
 
-  const handleSelectOption = (question: string, label: string) => {
-    setSelectedAnswers((prev) => ({ ...prev, [question]: label }));
-  };
-
-  const handleSubmit = async () => {
-    if (!allAnswered) return;
+  const handleAnswer = async (answers: Record<string, string | string[]>) => {
     setSubmitting(true);
     try {
       const res = await fetch('/api/questions/answer', {
@@ -46,7 +35,7 @@ function QuestionEntryItem({ entry, onAnswered }: { entry: PendingQuestionEntry;
           attemptId: entry.attemptId,
           toolUseId: entry.toolUseId,
           questions: entry.questions,
-          answers: selectedAnswers,
+          answers,
         }),
       });
       if (res.ok) {
@@ -68,6 +57,7 @@ function QuestionEntryItem({ entry, onAnswered }: { entry: PendingQuestionEntry;
 
   return (
     <div className="border-b border-border last:border-b-0">
+      {/* Collapsed summary row */}
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full text-left px-4 py-3 hover:bg-accent/50 transition-colors flex items-start gap-2"
@@ -93,54 +83,27 @@ function QuestionEntryItem({ entry, onAnswered }: { entry: PendingQuestionEntry;
         </div>
       </button>
 
+      {/* Expanded: full QuestionPrompt + go-to-task link */}
       {expanded && (
-        <div className="px-4 pb-3 space-y-3">
-          {questions.map((q, qIdx) => (
-            <div key={qIdx} className="space-y-1.5">
-              <p className="text-sm font-medium text-foreground">{q.question}</p>
-              <div className="space-y-1">
-                {q.options.map((opt) => {
-                  const isSelected = selectedAnswers[q.question] === opt.label;
-                  return (
-                    <button
-                      key={opt.label}
-                      onClick={() => handleSelectOption(q.question, opt.label)}
-                      className={cn(
-                        'w-full text-left px-3 py-2 rounded text-sm border transition-colors',
-                        isSelected
-                          ? 'border-primary bg-primary/10 text-foreground'
-                          : 'border-border hover:border-primary/50 text-muted-foreground'
-                      )}
-                    >
-                      <div className="flex items-center gap-1.5">
-                        {isSelected && <Check className="size-3.5 text-primary shrink-0" />}
-                        <span className="font-medium">{opt.label}</span>
-                      </div>
-                      {opt.description && (
-                        <p className="text-xs text-muted-foreground mt-0.5 ml-5">{opt.description}</p>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-
-          <div className="flex items-center gap-2 pt-1">
-            <Button
-              size="sm"
-              onClick={handleSubmit}
-              disabled={!allAnswered || submitting}
-            >
-              {submitting ? 'Submitting...' : 'Submit'}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
+        <div className="border-t border-border/50">
+          {/* Go to task link */}
+          <div className="px-4 pt-2 flex justify-end">
+            <button
               onClick={handleGoToTask}
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
+              <ExternalLink className="size-3" />
               Go to task
-            </Button>
+            </button>
+          </div>
+
+          {/* Reuse the same QuestionPrompt component */}
+          <div className={cn(submitting && 'opacity-50 pointer-events-none')}>
+            <QuestionPrompt
+              questions={questions}
+              onAnswer={handleAnswer}
+              onCancel={() => setExpanded(false)}
+            />
           </div>
         </div>
       )}
@@ -179,7 +142,7 @@ export function QuestionsPanel({ className }: QuestionsPanelProps) {
       {/* Sidebar */}
       <div
         className={cn(
-          'fixed right-0 top-0 h-full w-80 bg-background border-l shadow-lg z-50',
+          'fixed right-0 top-0 h-full w-96 bg-background border-l shadow-lg z-50',
           'flex flex-col',
           className
         )}
