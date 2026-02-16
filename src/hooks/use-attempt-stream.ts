@@ -5,6 +5,7 @@ import { io, Socket } from 'socket.io-client';
 import type { ClaudeOutput, WsAttemptFinished } from '@/types';
 import { useRunningTasksStore } from '@/stores/running-tasks-store';
 import { useQuestionsStore } from '@/stores/questions-store';
+import { useWorkflowStore } from '@/stores/workflow-store';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('AttemptStreamHook');
@@ -354,6 +355,35 @@ export function useAttemptStream(
 
     socketInstance.on('question:resolved', (data: { attemptId: string }) => {
       useQuestionsStore.getState().removeQuestion(data.attemptId);
+    });
+
+    // Listen for per-attempt workflow updates (full data including nodes/messages)
+    socketInstance.on('status:workflow', (data: { attemptId: string; nodes: unknown[]; messages: unknown[]; summary: { chain: string[]; completedCount: number; activeCount: number; totalCount: number } }) => {
+      // Feed workflow store with full node data for the workflow panel
+      useWorkflowStore.getState().updateWorkflow(data.attemptId, {
+        nodes: data.nodes as any,
+        messages: data.messages as any,
+        summary: data.summary,
+      });
+    });
+
+    // Listen for global workflow updates (for workflow panel cross-task tracking)
+    socketInstance.on('workflow:update', (data: { attemptId: string; taskId: string; taskTitle: string; summary: { chain: string[]; completedCount: number; activeCount: number; totalCount: number } }) => {
+      useWorkflowStore.getState().updateWorkflow(data.attemptId, {
+        taskId: data.taskId,
+        taskTitle: data.taskTitle,
+        summary: data.summary,
+      });
+      // Clean up entries with no active agents
+      if (data.summary.activeCount === 0 && data.summary.totalCount > 0) {
+        // Keep for a bit so user can see final state, then remove
+        setTimeout(() => {
+          const entry = useWorkflowStore.getState().workflows.get(data.attemptId);
+          if (entry && entry.summary.activeCount === 0) {
+            useWorkflowStore.getState().removeWorkflow(data.attemptId);
+          }
+        }, 30000);
+      }
     });
 
     // Listen for stderr output (error messages from agent)

@@ -108,6 +108,9 @@ app.prepare().then(async () => {
     pingTimeout: 10000,
   });
 
+  // Disconnect cleanup timers - keyed by attemptId
+  const disconnectTimers = new Map<string, NodeJS.Timeout>();
+
   // Socket.io connection handler
   io.on('connection', (socket) => {
     log.info(`Client connected: ${socket.id}`);
@@ -403,6 +406,14 @@ app.prepare().then(async () => {
     socket.on('attempt:subscribe', (data: { attemptId: string }) => {
       log.info(`[Server] Socket ${socket.id} subscribing to attempt:${data.attemptId}`);
       socket.join(`attempt:${data.attemptId}`);
+
+      // Clear disconnect timer if client reconnected
+      const timer = disconnectTimers.get(data.attemptId);
+      if (timer) {
+        clearTimeout(timer);
+        disconnectTimers.delete(data.attemptId);
+        log.info({ attemptId: data.attemptId }, '[Server] Cleared disconnect timer on reconnect');
+      }
     });
 
     // Unsubscribe from attempt logs
@@ -660,6 +671,49 @@ app.prepare().then(async () => {
 
     socket.on('disconnect', () => {
       log.info(`Client disconnected: ${socket.id}`);
+
+      // Find all attempt rooms this socket was in
+      // Socket.io automatically removes the socket from rooms on disconnect
+      // but we can check which rooms had this socket before disconnect
+      const socketRooms = Array.from(socket.rooms || []);
+      const attemptRooms = socketRooms
+        .filter(room => room.startsWith('attempt:'))
+        .map(room => room.replace('attempt:', ''));
+
+      for (const attemptId of attemptRooms) {
+        // Start grace timer for this attempt
+        if (disconnectTimers.has(attemptId)) continue; // Already has a timer
+
+        const timer = setTimeout(async () => {
+          disconnectTimers.delete(attemptId);
+
+          // Check if attempt room still has 0 clients
+          const room = io.sockets.adapter.rooms.get(`attempt:${attemptId}`);
+          if (room && room.size > 0) {
+            log.info({ attemptId, clients: room.size }, '[Server] Attempt room still has clients, skipping cleanup');
+            return;
+          }
+
+          // Check if attempt is still running
+          if (!agentManager.isRunning(attemptId)) return;
+
+          log.info({ attemptId }, '[Server] No clients for 30s, cancelling orphaned attempt');
+
+          // Cancel the agent
+          agentManager.cancel(attemptId);
+
+          // Mark subagents as orphaned in DB
+          try {
+            await db.update(schema.subagents)
+              .set({ status: 'orphaned', completedAt: Date.now() })
+              .where(eq(schema.subagents.attemptId, attemptId));
+          } catch (err) {
+            log.error({ err, attemptId }, '[Server] Failed to mark subagents as orphaned on disconnect');
+          }
+        }, 30000);
+
+        disconnectTimers.set(attemptId, timer);
+      }
     });
   });
 
@@ -1224,6 +1278,25 @@ app.prepare().then(async () => {
       }
     }
 
+    // Mark any remaining in-progress subagents as orphaned in DB
+    const orphanedNodes = workflowTracker.markOrphaned(attemptId);
+    if (orphanedNodes.length > 0) {
+      log.info({ attemptId, count: orphanedNodes.length }, '[Server] Marking orphaned subagents');
+      for (const node of orphanedNodes) {
+        try {
+          await db.update(schema.subagents)
+            .set({
+              status: 'orphaned',
+              completedAt: node.completedAt || Date.now(),
+              durationMs: node.durationMs || null,
+            })
+            .where(eq(schema.subagents.id, node.id));
+        } catch (err) {
+          log.error({ err, nodeId: node.id }, '[Server] Failed to mark subagent as orphaned');
+        }
+      }
+    }
+
     // Clean up in-memory tracking data for this attempt to prevent unbounded growth
     usageTracker.clearSession(attemptId);
     workflowTracker.clearWorkflow(attemptId);
@@ -1241,14 +1314,71 @@ app.prepare().then(async () => {
   });
 
   // Workflow tracking (subagent execution chain)
-  workflowTracker.on('workflow-update', ({ attemptId, workflow }) => {
-    const summary = workflowTracker.getWorkflowSummary(attemptId);
-    if (summary) {
-      log.info({ attemptId, chain: summary.chain }, '[Server] Emitting status:workflow');
+  workflowTracker.on('workflow-update', ({ attemptId }) => {
+    const expanded = workflowTracker.getExpandedWorkflow(attemptId);
+    if (expanded) {
+      log.info({ attemptId, chain: expanded.summary.chain }, '[Server] Emitting status:workflow');
       io.to(`attempt:${attemptId}`).emit('status:workflow', {
         attemptId,
-        workflow: summary,
+        nodes: expanded.nodes,
+        messages: expanded.messages,
+        summary: expanded.summary,
       });
+
+      // Also emit global workflow:update for cross-task awareness
+      // Look up taskId and title for the attempt
+      db.query.attempts.findFirst({
+        where: eq(schema.attempts.id, attemptId),
+      }).then(attempt => {
+        if (attempt) {
+          db.query.tasks.findFirst({
+            where: eq(schema.tasks.id, attempt.taskId),
+          }).then(task => {
+            io.emit('workflow:update', {
+              attemptId,
+              taskId: attempt.taskId,
+              taskTitle: task?.title || 'Unknown',
+              summary: expanded.summary,
+            });
+          }).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+  });
+
+  // Persist subagent start to DB
+  workflowTracker.on('subagent-start', async ({ attemptId, node }) => {
+    try {
+      await db.insert(schema.subagents).values({
+        id: node.id,
+        attemptId,
+        type: node.type,
+        name: node.name || null,
+        parentId: node.parentId,
+        teamName: node.teamName || null,
+        status: 'in_progress',
+        depth: node.depth,
+        startedAt: node.startedAt || Date.now(),
+      });
+    } catch (err) {
+      log.error({ err, attemptId, nodeId: node.id }, '[Server] Failed to persist subagent start');
+    }
+  });
+
+  // Persist subagent end to DB
+  workflowTracker.on('subagent-end', async ({ attemptId, node }) => {
+    try {
+      const dbStatus = node.status as 'in_progress' | 'completed' | 'failed' | 'orphaned';
+      await db.update(schema.subagents)
+        .set({
+          status: dbStatus,
+          completedAt: node.completedAt || Date.now(),
+          durationMs: node.durationMs || null,
+          error: node.error || null,
+        })
+        .where(eq(schema.subagents.id, node.id));
+    } catch (err) {
+      log.error({ err, attemptId, nodeId: node.id }, '[Server] Failed to persist subagent end');
     }
   });
 

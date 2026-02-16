@@ -5,10 +5,11 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Task } from '@/types';
 import { cn, getProjectColor } from '@/lib/utils';
-import { GripVertical, MessageSquare, Trash2, Search } from 'lucide-react';
+import { GripVertical, MessageSquare, Trash2, Search, Network } from 'lucide-react';
 import { useTaskStore } from '@/stores/task-store';
 import { useProjectStore } from '@/stores/project-store';
 import { useQuestionsStore } from '@/stores/questions-store';
+import { useWorkflowStore } from '@/stores/workflow-store';
 import type { ChatHistoryMatch } from '@/hooks/use-chat-history-search';
 
 function formatRelativeTime(timestamp: number): string {
@@ -50,8 +51,11 @@ export function TaskCard({ task, attemptCount = 0, searchQuery = '', isMobile = 
   const { selectedTaskId, selectTask, deleteTask } = useTaskStore();
   const { projects, selectedProjectIds, isAllProjectsMode } = useProjectStore();
   const { getByTaskId } = useQuestionsStore();
+  const { getByTaskId: getWorkflowByTaskId } = useWorkflowStore();
   const isSelected = selectedTaskId === task.id;
   const hasPendingQuestion = !!getByTaskId(task.id);
+  const workflowEntry = getWorkflowByTaskId(task.id);
+  const hasActiveWorkflow = workflowEntry && workflowEntry.summary.activeCount > 0;
 
   // Helper function to highlight matched text
   const highlightText = (text: string) => {
@@ -157,6 +161,18 @@ export function TaskCard({ task, attemptCount = 0, searchQuery = '', isMobile = 
             className="absolute top-1.5 right-1.5 size-2 rounded-full bg-amber-500 z-10"
             title="Pending question"
           />
+        )}
+
+        {/* Active workflow indicator */}
+        {hasActiveWorkflow && (
+          <span
+            className="absolute top-1.5 flex items-center gap-0.5 text-[9px] font-medium text-blue-500 z-10"
+            style={{ right: hasPendingQuestion ? '1rem' : '0.375rem' }}
+            title={`${workflowEntry.summary.activeCount} agent${workflowEntry.summary.activeCount !== 1 ? 's' : ''} running`}
+          >
+            <Network className="size-2.5" />
+            <span>{workflowEntry.summary.activeCount}</span>
+          </span>
         )}
 
         {/* Delete button - always visible for Done/Cancelled tasks */}
