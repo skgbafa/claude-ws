@@ -1,13 +1,21 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-const API_ACCESS_KEY = process.env.API_ACCESS_KEY;
+/**
+ * Get API access key at call time (not module load time).
+ * In daemon mode, dotenv loads after Next.js modules are imported,
+ * so capturing at module scope would snapshot an undefined value.
+ */
+function getApiAccessKey(): string | undefined {
+  return process.env.API_ACCESS_KEY;
+}
 
 /**
  * Check if API authentication is enabled
  */
 export function isApiAuthEnabled(): boolean {
-  return Boolean(API_ACCESS_KEY && API_ACCESS_KEY.length > 0);
+  const key = getApiAccessKey();
+  return Boolean(key && key.length > 0);
 }
 
 /**
@@ -21,7 +29,7 @@ export function verifyApiKey(request: NextRequest): boolean {
   }
 
   const providedKey = request.headers.get('x-api-key');
-  return providedKey === API_ACCESS_KEY;
+  return providedKey === getApiAccessKey();
 }
 
 /**

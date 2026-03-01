@@ -3,7 +3,8 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { locales, defaultLocale } from './i18n/config';
 
-const API_ACCESS_KEY = process.env.API_ACCESS_KEY;
+// Read at call time, not module load time (daemon loads dotenv after modules)
+function getApiAccessKey() { return process.env.API_ACCESS_KEY; }
 
 // Create i18n middleware
 const intlMiddleware = createMiddleware({
@@ -24,14 +25,15 @@ export function proxy(request: NextRequest) {
 
   if (isApiRoute && !isVerifyEndpoint) {
     // If no API key is configured, allow all requests
-    if (!API_ACCESS_KEY || API_ACCESS_KEY.length === 0) {
+    const apiKey = getApiAccessKey();
+    if (!apiKey || apiKey.length === 0) {
       return NextResponse.next();
     }
 
     // Check for x-api-key header
     const providedKey = request.headers.get('x-api-key');
 
-    if (!providedKey || providedKey !== API_ACCESS_KEY) {
+    if (!providedKey || providedKey !== apiKey) {
       return NextResponse.json(
         { error: 'Unauthorized', message: 'Valid API key required' },
         { status: 401 }
