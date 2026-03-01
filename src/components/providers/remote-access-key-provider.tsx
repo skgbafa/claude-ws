@@ -26,20 +26,14 @@ export function RemoteAccessKeyProvider({ children }: { children: React.ReactNod
     setIsLocal(isLocalhost());
 
     const checkRemoteAccess = async () => {
-      // Skip check on localhost
-      if (isLocalhost()) {
-        setChecked(true);
-        return;
-      }
-      // Auto-complete onboarding for remote access users
-      localStorage.setItem('onboarding_completed', 'true');
-
-      // Check if auth is already required (API key already configured)
+      // Check if backend is a daemon process
+      let isDaemon = false;
       try {
         const authRes = await fetch('/api/auth/verify');
         const authData = await authRes.json();
+        isDaemon = authData.isDaemon === true;
 
-        // If authRequired is true, API key is already configured - no need to prompt
+        // If authRequired is true, API key is already configured - ApiKeyProvider handles the prompt
         if (authData.authRequired === true) {
           setChecked(true);
           return;
@@ -47,6 +41,15 @@ export function RemoteAccessKeyProvider({ children }: { children: React.ReactNod
       } catch {
         // If check fails, continue to next check
       }
+
+      // Skip setup prompt on localhost unless running as daemon
+      if (isLocalhost() && !isDaemon) {
+        setChecked(true);
+        return;
+      }
+
+      // Auto-complete onboarding for remote/daemon access users
+      localStorage.setItem('onboarding_completed', 'true');
 
       // Check if API access key is configured
       try {

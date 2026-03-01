@@ -37,5 +37,8 @@ export async function POST(request: NextRequest) {
  * Returns: { authRequired: boolean }
  */
 export async function GET() {
-  return NextResponse.json({ authRequired: isApiAuthEnabled() });
+  return NextResponse.json({
+    authRequired: isApiAuthEnabled(),
+    isDaemon: !!process.env.CLAUDE_WS_DAEMON,
+  });
 }
