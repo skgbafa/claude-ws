@@ -5,7 +5,7 @@
  * prompt → response workflows without tool interception.
  */
 
-import { spawn, type ChildProcess } from 'child_process';
+import { spawn, execSync, type ChildProcess } from 'child_process';
 import { existsSync } from 'fs';
 import { join, normalize } from 'path';
 import { createLogger } from './logger';
@@ -38,7 +38,19 @@ export function findClaudePath(): string | undefined {
         '/opt/homebrew/bin/claude',
       ];
 
-  return candidates.find(p => existsSync(p));
+  const found = candidates.find(p => existsSync(p));
+  if (found) return found;
+
+  // Fallback: use which/where to find claude on PATH (covers nvm, etc.)
+  try {
+    const cmd = isWindows ? 'where claude' : 'which claude';
+    const result = execSync(cmd, { encoding: 'utf8', timeout: 5000 }).trim().split('\n')[0];
+    if (result && existsSync(result)) return result;
+  } catch {
+    // which/where failed — claude not on PATH
+  }
+
+  return undefined;
 }
 
 export interface CliQueryOptions {
