@@ -49,6 +49,8 @@ function getToolIcon(name: string) {
     WebFetch: Globe,
     WebSearch: Globe,
     Skill: Zap,
+    Task: Zap,
+    Agent: Zap,
   };
   return icons[name] || FileText;
 }
@@ -67,6 +69,7 @@ function getToolActiveVerb(name: string): string {
     WebSearch: 'Searching web',
     Skill: 'Executing',
     Task: 'Delegating',
+    Agent: 'Delegating',
     AskUserQuestion: 'Waiting for',
   };
   return verbs[name] || 'Processing';
@@ -109,6 +112,7 @@ function getToolDisplay(name: string, input: any): string {
     case 'WebSearch':
       return `"${input.query || ''}"`;
     case 'Task':
+    case 'Agent':
       return input.description || 'task...';
     default:
       return name;
@@ -137,7 +141,8 @@ function getResultSummary(name: string, result?: string): string | null {
       if (files === 0) return 'no files';
       return `${files} file${files !== 1 ? 's' : ''}`;
     }
-    case 'Task': {
+    case 'Task':
+    case 'Agent': {
       // Show completion status
       if (result.includes('completed')) return 'completed';
       return null;
@@ -293,7 +298,7 @@ export const ToolUseBlock = memo(function ToolUseBlock({ name, id, input, result
   const Icon = getToolIcon(name);
 
   // Special rendering for Task (agent spawning) tool
-  if (name === 'Task') {
+  if (name === 'Task' || name === 'Agent') {
     const taskInput = input as { name?: string; subagent_type?: string; description?: string; prompt?: string } | null;
     const agentName = taskInput?.name || taskInput?.subagent_type || 'agent';
     const prompt = taskInput?.prompt || taskInput?.description || '';

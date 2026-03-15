@@ -156,7 +156,7 @@ function trackWorkflowFromMessage(ctx: EventWiringContext, attemptId: string, me
 
   if (msg.type === 'assistant' && msg.message?.content) {
     for (const block of msg.message.content) {
-      if (block.type === 'tool_use' && block.name === 'Task' && block.id) {
+      if (block.type === 'tool_use' && (block.name === 'Task' || block.name === 'Agent') && block.id) {
         const taskInput = (block as { input?: { subagent_type?: string; team_name?: string; name?: string; prompt?: string; description?: string } }).input;
         workflowTracker.trackSubagentStart(
           attemptId, block.id, taskInput?.subagent_type || 'unknown',
