@@ -1,18 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { AlertCircle, Wallet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-
-// Extend Window for ethereum provider (MetaMask / injected wallets)
-declare global {
-  interface Window {
-    ethereum?: {
-      request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-      isMetaMask?: boolean;
-    };
-  }
-}
 
 interface SiweSignInProps {
   onSuccess?: () => void;
@@ -21,28 +11,28 @@ interface SiweSignInProps {
 export function SiweSignIn({ onSuccess }: SiweSignInProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const openKeyRef = useRef<import('@openkey/sdk').OpenKey | null>(null);
+
+  const getOpenKey = async () => {
+    if (!openKeyRef.current) {
+      const { OpenKey } = await import('@openkey/sdk');
+      openKeyRef.current = new OpenKey({
+        host: process.env.NEXT_PUBLIC_OPENKEY_HOST || 'https://openkey.so',
+      });
+    }
+    return openKeyRef.current;
+  };
 
   const handleSignIn = async () => {
     setError('');
-
-    if (!window.ethereum) {
-      setError('No wallet provider detected. Please install MetaMask or connect via OpenKey.');
-      return;
-    }
-
     setLoading(true);
+
     try {
-      // Request accounts from wallet
-      const accounts = (await window.ethereum.request({
-        method: 'eth_requestAccounts',
-      })) as string[];
+      const openkey = await getOpenKey();
 
-      if (!accounts || accounts.length === 0) {
-        setError('No accounts found. Please connect your wallet.');
-        return;
-      }
-
-      const address = accounts[0]!;
+      // Connect via OpenKey — user authenticates and selects a key
+      const auth = await openkey.connect();
+      const address = auth.address;
 
       // Request challenge from server
       const challengeRes = await fetch('/api/auth/challenge', {
@@ -59,11 +49,8 @@ export function SiweSignIn({ onSuccess }: SiweSignInProps) {
 
       const { message } = await challengeRes.json();
 
-      // Sign the message with wallet (personal_sign)
-      const signature = await window.ethereum.request({
-        method: 'personal_sign',
-        params: [message, address],
-      });
+      // Sign the SIWE message via OpenKey
+      const { signature } = await openkey.signMessage({ message });
 
       // Verify with server
       const verifyRes = await fetch('/api/auth/siwe', {
@@ -80,8 +67,6 @@ export function SiweSignIn({ onSuccess }: SiweSignInProps) {
 
       const result = await verifyRes.json();
       if (result.authenticated) {
-        // Session cookie is set automatically by the server response.
-        // Reload to reinitialize with authenticated state.
         if (onSuccess) {
           onSuccess();
         } else {
@@ -91,12 +76,14 @@ export function SiweSignIn({ onSuccess }: SiweSignInProps) {
         setError('Authentication failed');
       }
     } catch (err: unknown) {
-      // User rejected the signature request
-      if (err && typeof err === 'object' && 'code' in err && (err as { code: number }).code === 4001) {
-        setError('Signature request was rejected');
-      } else {
-        setError(err instanceof Error ? err.message : 'Sign-in failed');
+      if (err && typeof err === 'object' && 'code' in err) {
+        const code = (err as { code: string }).code;
+        if (code === 'USER_CANCELLED') {
+          setError('Sign-in was cancelled');
+          return;
+        }
       }
+      setError(err instanceof Error ? err.message : 'Sign-in failed');
     } finally {
       setLoading(false);
     }
