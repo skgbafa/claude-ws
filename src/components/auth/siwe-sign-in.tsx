@@ -26,7 +26,7 @@ export function SiweSignIn({ onSuccess }: SiweSignInProps) {
     setError('');
 
     if (!window.ethereum) {
-      setError('No Ethereum wallet detected. Please install MetaMask or another wallet.');
+      setError('No wallet provider detected. Please install MetaMask or connect via OpenKey.');
       return;
     }
 
@@ -111,7 +111,7 @@ export function SiweSignIn({ onSuccess }: SiweSignInProps) {
         className="w-full gap-2"
       >
         <Wallet className="h-4 w-4" />
-        {loading ? 'Signing in...' : 'Sign in with Ethereum'}
+        {loading ? 'Signing in...' : 'Sign in with OpenKey'}
       </Button>
 
       {error && (
