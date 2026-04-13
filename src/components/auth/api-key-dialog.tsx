@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
 import { Key, AlertCircle, Check } from 'lucide-react';
+import { SiweSignIn } from './siwe-sign-in';
 import {
   Dialog,
   DialogContent,
@@ -26,6 +27,7 @@ interface ApiKeyDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
+  siweEnabled?: boolean;
 }
 
 /**
@@ -65,15 +67,42 @@ export function clearStoredApiKey(): void {
 }
 
 /**
- * Check if API key is required by the server
+ * Check if API key is required by the server and if SIWE is available
  */
-async function checkAuthRequired(): Promise<boolean> {
+async function checkAuthStatus(): Promise<{ authRequired: boolean; siweEnabled: boolean }> {
   try {
     const res = await fetch('/api/auth/verify');
     const data = await res.json();
-    return data.authRequired === true;
+    return {
+      authRequired: data.authRequired === true,
+      siweEnabled: data.siweEnabled === true,
+    };
   } catch {
-    // If check fails, assume auth is not required
+    return { authRequired: false, siweEnabled: false };
+  }
+}
+
+/**
+ * Check if API key is required by the server
+ */
+async function checkAuthRequired(): Promise<boolean> {
+  const { authRequired } = await checkAuthStatus();
+  return authRequired;
+}
+
+/**
+ * Check if user has a valid session cookie (from SIWE sign-in)
+ */
+async function checkSessionCookie(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/auth/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json();
+    return data.valid === true && !!data.siweAddress;
+  } catch {
     return false;
   }
 }
@@ -95,7 +124,7 @@ async function verifyApiKey(apiKey: string): Promise<boolean> {
   }
 }
 
-export function ApiKeyDialog({ open, onOpenChange, onSuccess }: ApiKeyDialogProps) {
+export function ApiKeyDialog({ open, onOpenChange, onSuccess, siweEnabled }: ApiKeyDialogProps) {
   const t = useTranslations('auth');
   const tCommon = useTranslations('common');
   const [apiKey, setApiKey] = useState('');
@@ -147,61 +176,75 @@ export function ApiKeyDialog({ open, onOpenChange, onSuccess }: ApiKeyDialogProp
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-6 py-4">
+        <div className="space-y-6 py-4">
+          {/* SIWE Sign-In option (shown when enabled) */}
+          {siweEnabled && (
+            <>
+              <SiweSignIn onSuccess={onSuccess} />
+              <div className="flex items-center gap-3">
+                <div className="h-px flex-1 bg-border" />
+                <span className="text-xs text-muted-foreground uppercase">or</span>
+                <div className="h-px flex-1 bg-border" />
+              </div>
+            </>
+          )}
+
           {/* API Key Input */}
-          <div className="space-y-2">
-            <label htmlFor="api-key" className="text-sm font-medium">
-              {t('apiKey')}
-            </label>
-            <div className="relative">
-              <Key className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                id="api-key"
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder={t('enterYourApiKey')}
-                className="pl-8"
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="space-y-2">
+              <label htmlFor="api-key" className="text-sm font-medium">
+                {t('apiKey')}
+              </label>
+              <div className="relative">
+                <Key className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  id="api-key"
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={t('enterYourApiKey')}
+                  className="pl-8"
+                  disabled={loading}
+                  autoFocus={!siweEnabled}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {t('apiKeyStoredLocally')}
+              </p>
+            </div>
+
+            {/* Error */}
+            {error && (
+              <div className="flex items-center gap-2 text-sm text-destructive">
+                <AlertCircle className="h-4 w-4" />
+                {error}
+              </div>
+            )}
+
+            {/* Success hint */}
+            {!error && apiKey && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Check className="h-4 w-4 text-muted-foreground" />
+                {t('pressEnterOrSubmit')}
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => onOpenChange(false)}
                 disabled={loading}
-                autoFocus
-              />
+              >
+                {tCommon('cancel')}
+              </Button>
+              <Button type="submit" disabled={loading || !apiKey}>
+                {loading ? tCommon('verifying') : tCommon('submit')}
+              </Button>
             </div>
-            <p className="text-xs text-muted-foreground">
-              {t('apiKeyStoredLocally')}
-            </p>
-          </div>
-
-          {/* Error */}
-          {error && (
-            <div className="flex items-center gap-2 text-sm text-destructive">
-              <AlertCircle className="h-4 w-4" />
-              {error}
-            </div>
-          )}
-
-          {/* Success hint */}
-          {!error && apiKey && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Check className="h-4 w-4 text-muted-foreground" />
-              {t('pressEnterOrSubmit')}
-            </div>
-          )}
-
-          {/* Actions */}
-          <div className="flex justify-end gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-              disabled={loading}
-            >
-              {tCommon('cancel')}
-            </Button>
-            <Button type="submit" disabled={loading || !apiKey}>
-              {loading ? tCommon('verifying') : tCommon('submit')}
-            </Button>
-          </div>
-        </form>
+          </form>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -296,19 +339,30 @@ export function ApiKeyProvider({ children }: { children: React.ReactNode }) {
   const [showAuthDialog, setShowAuthDialog] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
   const [authRequired, setAuthRequired] = useState(false);
+  const [siweEnabled, setSiweEnabled] = useState(false);
 
   // Check auth on mount before rendering children
   useEffect(() => {
     const check = async () => {
       try {
-        const needed = await checkAuthRequired();
-        if (!needed) {
+        const status = await checkAuthStatus();
+        if (!status.authRequired) {
           setAuthChecked(true);
           return;
         }
         setAuthRequired(true);
+        setSiweEnabled(status.siweEnabled);
 
-        // Auth is required — check if we have a valid stored key
+        // Check for valid SIWE session cookie first
+        if (status.siweEnabled) {
+          const hasSession = await checkSessionCookie();
+          if (hasSession) {
+            setAuthChecked(true);
+            return;
+          }
+        }
+
+        // Auth is required — check if we have a valid stored API key
         const storedKey = getStoredApiKey();
         if (storedKey) {
           const valid = await verifyApiKey(storedKey);
@@ -319,7 +373,7 @@ export function ApiKeyProvider({ children }: { children: React.ReactNode }) {
           clearStoredApiKey();
         }
 
-        // No valid key — show dialog, don't render children
+        // No valid key or session — show dialog, don't render children
         setShowAuthDialog(true);
       } catch {
         // If check fails, allow through
@@ -373,11 +427,11 @@ export function ApiKeyProvider({ children }: { children: React.ReactNode }) {
 
       const response = await originalFetch(url, newOptions);
 
-      // Check for 401 on API routes (except auth/verify endpoint)
+      // Check for 401 on API routes (except auth endpoints)
       const isApiRoute = urlString.includes('/api/');
-      const isVerifyEndpoint = urlString.includes('/api/auth/verify');
+      const isAuthEndpoint = urlString.includes('/api/auth/');
 
-      if (response.status === 401 && isApiRoute && !isVerifyEndpoint) {
+      if (response.status === 401 && isApiRoute && !isAuthEndpoint) {
         // Clear stored key if it's invalid
         if (apiKey) {
           clearStoredApiKey();
@@ -408,6 +462,7 @@ export function ApiKeyProvider({ children }: { children: React.ReactNode }) {
         open={true}
         onOpenChange={() => {}}
         onSuccess={handleAuthSuccess}
+        siweEnabled={siweEnabled}
       />
     );
   }
@@ -419,6 +474,7 @@ export function ApiKeyProvider({ children }: { children: React.ReactNode }) {
         open={showAuthDialog}
         onOpenChange={setShowAuthDialog}
         onSuccess={handleAuthSuccess}
+        siweEnabled={siweEnabled}
       />
     </>
   );

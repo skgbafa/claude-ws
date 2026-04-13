@@ -40,6 +40,12 @@ function addNoCacheHeaders(response: NextResponse): NextResponse {
  * Next.js middleware for API authentication and i18n routing
  * API auth is also handled in server.ts for custom server deployments
  * This provides a fallback for standard Next.js deployments
+ *
+ * SIWE session validation note:
+ * Edge Runtime middleware cannot access Node.js in-memory stores directly.
+ * For SIWE sessions, we check cookie existence here and let it through to
+ * the API route or server.ts handler which does full session validation
+ * against the in-memory session store.
  */
 export default function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
@@ -49,33 +55,43 @@ export default function middleware(request: NextRequest) {
     const isVerifyEndpoint = pathname === '/api/auth/verify';
     const isTunnelStatusEndpoint = pathname === '/api/tunnel/status';
     const isApiAccessKeyEndpoint = pathname === '/api/settings/api-access-key';
+    const isSiweAuthEndpoint = pathname === '/api/auth/challenge' || pathname === '/api/auth/siwe';
     // Uploads GET is public (for serving files), DELETE requires API key
     const isUploadsGetEndpoint = pathname.startsWith('/api/uploads/') && request.method === 'GET';
 
     // Skip auth for whitelisted endpoints
-    if (isVerifyEndpoint || isTunnelStatusEndpoint || isApiAccessKeyEndpoint || isUploadsGetEndpoint) {
+    if (isVerifyEndpoint || isTunnelStatusEndpoint || isApiAccessKeyEndpoint || isUploadsGetEndpoint || isSiweAuthEndpoint) {
       return addNoCacheHeaders(NextResponse.next());
     }
 
     // Read from process.env directly for immediate effect when key is updated
     const apiAccessKey = process.env.API_ACCESS_KEY;
+    const siweConfigured = !!(process.env.OPENKEY_ACCEPTED_ADDRESSES?.trim());
 
-    // If no API key is configured, allow all requests
-    if (!apiAccessKey || apiAccessKey.length === 0) {
+    // If no auth mechanism is configured, allow all requests
+    if ((!apiAccessKey || apiAccessKey.length === 0) && !siweConfigured) {
       return addNoCacheHeaders(NextResponse.next());
     }
 
     // Check for x-api-key header
     const providedKey = request.headers.get('x-api-key');
-
-    if (!providedKey || !edgeSafeCompare(providedKey, apiAccessKey)) {
-      return addNoCacheHeaders(NextResponse.json(
-        { error: 'Unauthorized', message: 'Valid API key required' },
-        { status: 401 }
-      ));
+    if (providedKey && apiAccessKey && edgeSafeCompare(providedKey, apiAccessKey)) {
+      return addNoCacheHeaders(NextResponse.next());
     }
 
-    return addNoCacheHeaders(NextResponse.next());
+    // Check for cw-session cookie
+    // Edge middleware cannot validate the session token against the in-memory store,
+    // so we just check presence here. Full validation happens in server.ts or the API route.
+    const sessionCookie = request.cookies.get('cw-session')?.value;
+    if (sessionCookie && sessionCookie.length > 0) {
+      return addNoCacheHeaders(NextResponse.next());
+    }
+
+    // Neither valid API key nor session cookie present
+    return addNoCacheHeaders(NextResponse.json(
+      { error: 'Unauthorized', message: 'Valid API key or session required' },
+      { status: 401 }
+    ));
   }
 
   // Handle i18n for non-API routes only

@@ -38,6 +38,7 @@ import { terminalManager } from './src/lib/terminal-manager';
 import { db, schema } from './src/lib/db';
 import { createLogger } from './src/lib/logger';
 import { safeCompare } from './src/lib/timing-safe-compare';
+import { sessionStore, isSiweEnabled } from './src/lib/siwe-session';
 
 const log = createLogger('Server');
 import { eq } from 'drizzle-orm';
@@ -65,21 +66,50 @@ app.prepare().then(async () => {
 
     // API authentication check - read from process.env directly for immediate effect
     const apiAccessKey = process.env.API_ACCESS_KEY;
+    const siweEnabled = isSiweEnabled();
     const isApiRoute = pathname.startsWith('/api/');
     const isVerifyEndpoint = pathname === '/api/auth/verify';
     const isProxyEndpoint = pathname.startsWith('/api/proxy/anthropic');
     const isTunnelStatusEndpoint = pathname === '/api/tunnel/status';
     const isApiAccessKeyEndpoint = pathname === '/api/settings/api-access-key';
+    const isSiweAuthEndpoint = pathname === '/api/auth/challenge' || pathname === '/api/auth/siwe';
     // Uploads GET is public (for serving files), POST/DELETE require API key
     const isUploadsGetEndpoint = pathname.startsWith('/api/uploads/') && req.method === 'GET';
 
-    // Skip auth for verify, tunnel status, api-access-key, and uploads GET endpoints
-    if (isApiRoute && !isVerifyEndpoint && !isProxyEndpoint && !isTunnelStatusEndpoint && !isApiAccessKeyEndpoint && !isUploadsGetEndpoint && apiAccessKey && apiAccessKey.length > 0) {
-      const providedKey = req.headers['x-api-key'];
+    // Auth is "configured" if either API key or SIWE accepted addresses is set
+    const authConfigured = (apiAccessKey && apiAccessKey.length > 0) || siweEnabled;
 
-      if (!providedKey || typeof providedKey !== 'string' || !safeCompare(providedKey, apiAccessKey)) {
+    // Skip auth for whitelisted endpoints
+    if (isApiRoute && !isVerifyEndpoint && !isProxyEndpoint && !isTunnelStatusEndpoint && !isApiAccessKeyEndpoint && !isUploadsGetEndpoint && !isSiweAuthEndpoint && authConfigured) {
+      let authenticated = false;
+
+      // Check API key
+      const providedKey = req.headers['x-api-key'];
+      if (providedKey && typeof providedKey === 'string' && apiAccessKey && safeCompare(providedKey, apiAccessKey)) {
+        authenticated = true;
+      }
+
+      // Check SIWE session cookie
+      if (!authenticated) {
+        const cookieHeader = req.headers.cookie;
+        if (cookieHeader) {
+          const sessionToken = cookieHeader
+            .split(';')
+            .map((c) => c.trim())
+            .find((c) => c.startsWith('cw-session='));
+          if (sessionToken) {
+            const token = sessionToken.slice('cw-session='.length);
+            const address = sessionStore.verify(token);
+            if (address) {
+              authenticated = true;
+            }
+          }
+        }
+      }
+
+      if (!authenticated) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Unauthorized', message: 'Valid API key required' }));
+        res.end(JSON.stringify({ error: 'Unauthorized', message: 'Valid API key or session required' }));
         return;
       }
     }
