@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyMessage } from 'viem';
 import {
-  challengeStore,
   sessionStore,
   getAcceptedAddresses,
   isSiweEnabled,
+  SIWE_CHALLENGE_COOKIE_NAME,
+  SIWE_SESSION_COOKIE_NAME,
+  verifySiweChallengeCookie,
 } from '@/lib/siwe-session';
 
 /**
@@ -46,18 +48,21 @@ export async function POST(request: NextRequest) {
     }
 
     // Parse nonce from SIWE message
-    const nonceMatch = message.match(/Nonce: ([0-9a-f-]+)/);
+    const nonceMatch = message.match(/^Nonce: (.+)$/m);
     if (!nonceMatch) {
       return NextResponse.json(
         { error: 'Could not parse nonce from SIWE message' },
         { status: 400 }
       );
     }
-    const nonce = nonceMatch[1]!;
+    const nonce = nonceMatch[1]!.trim();
 
-    // Verify the nonce exists, hasn't expired, and matches the address
-    // This also deletes the nonce (single-use, replay-safe)
-    if (!challengeStore.verify(nonce, address)) {
+    const challengeToken = request.cookies.get(SIWE_CHALLENGE_COOKIE_NAME)?.value;
+
+    // Verify the challenge we issued for this browser still matches the
+    // signed message. In hosted deployments this is backed by a signed cookie
+    // instead of per-process memory.
+    if (!verifySiweChallengeCookie(challengeToken, message, address, nonce)) {
       return NextResponse.json(
         { error: 'Invalid or expired challenge nonce' },
         { status: 401 }
@@ -104,12 +109,19 @@ export async function POST(request: NextRequest) {
       address: address.toLowerCase(),
     });
 
-    response.cookies.set('cw-session', token, {
+    response.cookies.set(SIWE_SESSION_COOKIE_NAME, token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
       path: '/',
       maxAge: 24 * 60 * 60, // 24 hours in seconds
+    });
+    response.cookies.set(SIWE_CHALLENGE_COOKIE_NAME, '', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      path: '/api/auth',
+      maxAge: 0,
     });
 
     return response;

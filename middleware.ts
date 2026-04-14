@@ -42,10 +42,10 @@ function addNoCacheHeaders(response: NextResponse): NextResponse {
  * This provides a fallback for standard Next.js deployments
  *
  * SIWE session validation note:
- * Edge Runtime middleware cannot access Node.js in-memory stores directly.
- * For SIWE sessions, we check cookie existence here and let it through to
- * the API route or server.ts handler which does full session validation
- * against the in-memory session store.
+ * Edge Runtime middleware only checks for cookie presence here and lets the
+ * request through. Full validation happens in the API route or server.ts
+ * handler against the signed session token (or the legacy in-memory fallback
+ * when no SIWE signing secret is configured).
  */
 export default function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
@@ -81,8 +81,7 @@ export default function middleware(request: NextRequest) {
     }
 
     // Check for cw-session cookie
-    // Edge middleware cannot validate the session token against the in-memory store,
-    // so we just check presence here. Full validation happens in server.ts or the API route.
+    // Edge middleware does not do the final cryptographic/session validation.
     const sessionCookie = request.cookies.get('cw-session')?.value;
     if (sessionCookie && sessionCookie.length > 0) {
       return addNoCacheHeaders(NextResponse.next());

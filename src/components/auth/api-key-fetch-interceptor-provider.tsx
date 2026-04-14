@@ -122,6 +122,13 @@ export function ApiKeyFetchInterceptorProvider({ children }: { children: React.R
     window.location.reload();
   };
 
+  // Don't mount the app until the first auth check resolves.
+  // Otherwise child effects fire protected API requests before we know whether
+  // a dialog should block the UI, which produces noisy 401s on initial load.
+  if (!authChecked && !showAuthDialog) {
+    return null;
+  }
+
   // Block children while awaiting first auth confirmation
   if (showAuthDialog && !authChecked) {
     return (

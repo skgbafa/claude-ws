@@ -1,8 +1,10 @@
 /**
  * SIWE (Sign-In With Ethereum) session management
  *
- * Manages challenge nonces and session tokens for SIWE authentication.
- * All state is in-memory with TTL-based expiry and periodic cleanup.
+ * Hosted deployments need SIWE state that survives request routing across
+ * multiple handlers/processes. This module prefers stateless signed cookies
+ * when a stable signing secret is available, and falls back to the legacy
+ * in-memory stores only for single-process local development.
  */
 import crypto from 'crypto';
 
@@ -13,9 +15,128 @@ import crypto from 'crypto';
 const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const SESSION_TTL_MS = Number(process.env.SIWE_SESSION_TTL_MS) || 24 * 60 * 60 * 1000; // 24 hours default
 const CLEANUP_INTERVAL_MS = 60 * 1000; // 60 seconds
+const SIWE_NONCE_PATTERN = /^[A-Za-z0-9._-]{8,128}$/;
+const TOKEN_VERSION = 1;
+
+export const SIWE_CHALLENGE_COOKIE_NAME = 'cw-siwe-challenge';
+export const SIWE_SESSION_COOKIE_NAME = 'cw-session';
+
+type SignedTokenKind = 'siwe-challenge' | 'siwe-session';
+
+interface SignedTokenBase {
+  v: number;
+  kind: SignedTokenKind;
+  address: string;
+  exp: number;
+}
+
+interface SignedChallengeToken extends SignedTokenBase {
+  kind: 'siwe-challenge';
+  nonce: string;
+  messageHash: string;
+}
+
+interface SignedSessionToken extends SignedTokenBase {
+  kind: 'siwe-session';
+}
+
+function getSiweSigningSecret(): string | null {
+  const secret =
+    process.env.SIWE_SESSION_SECRET ||
+    process.env.API_ACCESS_KEY ||
+    null;
+
+  if (!secret || secret.trim().length === 0) {
+    return null;
+  }
+
+  return secret;
+}
+
+function isStatelessSiweEnabled(): boolean {
+  return getSiweSigningSecret() !== null;
+}
+
+function toBase64Url(value: Buffer | string): string {
+  return Buffer.from(value).toString('base64url');
+}
+
+function fromBase64Url(value: string): Buffer {
+  return Buffer.from(value, 'base64url');
+}
+
+function safeCompareString(a: string, b: string): boolean {
+  const aBuffer = Buffer.from(a);
+  const bBuffer = Buffer.from(b);
+
+  if (aBuffer.length !== bBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(aBuffer, bBuffer);
+}
+
+function signPayload(payload: SignedChallengeToken | SignedSessionToken): string {
+  const secret = getSiweSigningSecret();
+  if (!secret) {
+    throw new Error('SIWE signing secret is not configured');
+  }
+
+  const encodedPayload = toBase64Url(JSON.stringify(payload));
+  const signature = crypto
+    .createHmac('sha256', secret)
+    .update(encodedPayload)
+    .digest('base64url');
+
+  return `${encodedPayload}.${signature}`;
+}
+
+function verifySignedPayload<T extends SignedChallengeToken | SignedSessionToken>(
+  token: string,
+  kind: SignedTokenKind
+): T | null {
+  const secret = getSiweSigningSecret();
+  if (!secret) {
+    return null;
+  }
+
+  const [encodedPayload, signature] = token.split('.');
+  if (!encodedPayload || !signature) {
+    return null;
+  }
+
+  const expectedSignature = crypto
+    .createHmac('sha256', secret)
+    .update(encodedPayload)
+    .digest('base64url');
+
+  if (!safeCompareString(signature, expectedSignature)) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(fromBase64Url(encodedPayload).toString('utf8')) as T;
+    if (payload.v !== TOKEN_VERSION || payload.kind !== kind) {
+      return null;
+    }
+    if (typeof payload.address !== 'string' || payload.address.length === 0) {
+      return null;
+    }
+    if (typeof payload.exp !== 'number' || payload.exp <= Date.now()) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function hashSiweMessage(message: string): string {
+  return crypto.createHash('sha256').update(message).digest('base64url');
+}
 
 // ---------------------------------------------------------------------------
-// Challenge store — nonce management for SIWE sign-in
+// Legacy in-memory stores — fallback when no stable signing secret exists
 // ---------------------------------------------------------------------------
 
 interface ChallengeEntry {
@@ -40,15 +161,22 @@ export const challengeStore = {
    * Create a new challenge nonce for the given address.
    * Returns the nonce string.
    */
-  create(address: string): string {
+  create(address: string, nonce?: string): string {
+    if (isStatelessSiweEnabled()) {
+      return nonce ?? crypto.randomUUID();
+    }
+
     cleanExpiredChallenges();
-    const nonce = crypto.randomUUID();
-    challenges.set(nonce, {
-      nonce,
+    const selectedNonce = nonce ?? crypto.randomUUID();
+    if (challenges.has(selectedNonce)) {
+      throw new Error('Challenge nonce already exists');
+    }
+    challenges.set(selectedNonce, {
+      nonce: selectedNonce,
       address: address.toLowerCase(),
       expiresAt: Date.now() + CHALLENGE_TTL_MS,
     });
-    return nonce;
+    return selectedNonce;
   },
 
   /**
@@ -57,6 +185,10 @@ export const challengeStore = {
    * Returns true if valid.
    */
   verify(nonce: string, address: string): boolean {
+    if (isStatelessSiweEnabled()) {
+      return false;
+    }
+
     const entry = challenges.get(nonce);
     if (!entry) return false;
     if (entry.expiresAt <= Date.now()) {
@@ -71,15 +203,25 @@ export const challengeStore = {
     return true;
   },
 
+  /** Check whether a challenge nonce already exists. */
+  has(nonce: string): boolean {
+    if (isStatelessSiweEnabled()) {
+      return false;
+    }
+
+    cleanExpiredChallenges();
+    return challenges.has(nonce);
+  },
+
   /** Number of active challenges (for diagnostics). */
   get size(): number {
+    if (isStatelessSiweEnabled()) {
+      return 0;
+    }
+
     return challenges.size;
   },
 };
-
-// ---------------------------------------------------------------------------
-// Session store — token management for authenticated sessions
-// ---------------------------------------------------------------------------
 
 interface SessionEntry {
   token: string;
@@ -104,6 +246,15 @@ export const sessionStore = {
    * Returns the session token (hex string).
    */
   create(address: string): string {
+    if (isStatelessSiweEnabled()) {
+      return signPayload({
+        v: TOKEN_VERSION,
+        kind: 'siwe-session',
+        address: address.toLowerCase(),
+        exp: Date.now() + SESSION_TTL_MS,
+      });
+    }
+
     cleanExpiredSessions();
     const token = crypto.randomBytes(32).toString('hex');
     sessions.set(token, {
@@ -119,6 +270,11 @@ export const sessionStore = {
    * Returns the associated address, or null if invalid.
    */
   verify(token: string): string | null {
+    if (isStatelessSiweEnabled()) {
+      const payload = verifySignedPayload<SignedSessionToken>(token, 'siwe-session');
+      return payload?.address ?? null;
+    }
+
     const entry = sessions.get(token);
     if (!entry) return null;
     if (entry.expiresAt <= Date.now()) {
@@ -132,14 +288,75 @@ export const sessionStore = {
    * Revoke a session token.
    */
   revoke(token: string): void {
+    if (isStatelessSiweEnabled()) {
+      return;
+    }
+
     sessions.delete(token);
   },
 
   /** Number of active sessions (for diagnostics). */
   get size(): number {
+    if (isStatelessSiweEnabled()) {
+      return 0;
+    }
+
     return sessions.size;
   },
 };
+
+// ---------------------------------------------------------------------------
+// Stateless SIWE challenge helpers
+// ---------------------------------------------------------------------------
+
+export function createSiweChallengeCookieValue(
+  address: string,
+  nonce: string,
+  message: string
+): string | null {
+  if (!isStatelessSiweEnabled()) {
+    return null;
+  }
+
+  return signPayload({
+    v: TOKEN_VERSION,
+    kind: 'siwe-challenge',
+    address: address.toLowerCase(),
+    nonce,
+    messageHash: hashSiweMessage(message),
+    exp: Date.now() + CHALLENGE_TTL_MS,
+  });
+}
+
+export function verifySiweChallengeCookie(
+  challengeToken: string | undefined,
+  message: string,
+  address: string,
+  nonce: string
+): boolean {
+  if (!isStatelessSiweEnabled()) {
+    return challengeStore.verify(nonce, address);
+  }
+
+  if (!challengeToken) {
+    return false;
+  }
+
+  const payload = verifySignedPayload<SignedChallengeToken>(
+    challengeToken,
+    'siwe-challenge'
+  );
+
+  if (!payload) {
+    return false;
+  }
+
+  return (
+    payload.address === address.toLowerCase() &&
+    payload.nonce === nonce &&
+    payload.messageHash === hashSiweMessage(message)
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Accepted addresses
@@ -165,6 +382,13 @@ export function getAcceptedAddresses(): Set<string> {
  */
 export function isSiweEnabled(): boolean {
   return getAcceptedAddresses().size > 0;
+}
+
+/**
+ * Check whether a caller-supplied SIWE nonce is valid.
+ */
+export function isValidSiweNonce(nonce: string): boolean {
+  return SIWE_NONCE_PATTERN.test(nonce);
 }
 
 // ---------------------------------------------------------------------------

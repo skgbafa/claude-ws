@@ -6,9 +6,10 @@ import { Button } from '@/components/ui/button';
 
 interface SiweSignInProps {
   onSuccess?: () => void;
+  nonce?: string;
 }
 
-export function SiweSignIn({ onSuccess }: SiweSignInProps) {
+export function SiweSignIn({ onSuccess, nonce }: SiweSignInProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const openKeyRef = useRef<import('@openkey/sdk').OpenKey | null>(null);
@@ -32,13 +33,13 @@ export function SiweSignIn({ onSuccess }: SiweSignInProps) {
 
       // Connect via OpenKey — user authenticates and selects a key
       const auth = await openkey.connect();
-      const address = auth.address;
+      const { address, keyId } = auth;
 
       // Request challenge from server
       const challengeRes = await fetch('/api/auth/challenge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address }),
+        body: JSON.stringify({ address, nonce }),
       });
 
       if (!challengeRes.ok) {
@@ -50,7 +51,7 @@ export function SiweSignIn({ onSuccess }: SiweSignInProps) {
       const { message } = await challengeRes.json();
 
       // Sign the SIWE message via OpenKey
-      const { signature } = await openkey.signMessage({ message });
+      const { signature } = await openkey.signMessage({ message, keyId });
 
       // Verify with server
       const verifyRes = await fetch('/api/auth/siwe', {

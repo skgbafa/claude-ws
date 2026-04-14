@@ -36,9 +36,10 @@ interface ApiKeyDialogProps {
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
   siweEnabled?: boolean;
+  siweNonce?: string;
 }
 
-export function ApiKeyDialog({ open, onOpenChange, onSuccess, siweEnabled }: ApiKeyDialogProps) {
+export function ApiKeyDialog({ open, onOpenChange, onSuccess, siweEnabled, siweNonce }: ApiKeyDialogProps) {
   const t = useTranslations('auth');
   const tCommon = useTranslations('common');
   const [apiKey, setApiKey] = useState('');
@@ -91,7 +92,7 @@ export function ApiKeyDialog({ open, onOpenChange, onSuccess, siweEnabled }: Api
           {/* SIWE Sign-In option (shown when enabled) */}
           {siweEnabled && (
             <>
-              <SiweSignIn onSuccess={onSuccess} />
+              <SiweSignIn onSuccess={onSuccess} nonce={siweNonce} />
               <div className="flex items-center gap-3">
                 <div className="h-px flex-1 bg-border" />
                 <span className="text-xs text-muted-foreground uppercase">or</span>

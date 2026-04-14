@@ -76,6 +76,19 @@ Full Git workflow including staging, commits, push/pull, and visual commit graph
 
 ---
 
+### [OpenKey Auth](./openkey-auth.md)
+
+OpenKey-based SIWE sign-in for workspace sessions, including nonce handling, key selection, and the difference between SIWE and Claude provider OAuth setup.
+
+**Key sections:**
+- OpenKey connection and key selection
+- SIWE challenge/message/signature flow
+- Nonce handling and replay protection
+- OAuth vs SIWE separation
+- Example component and API usage
+
+**Tech stack:** OpenKey SDK, SIWE challenge store, Next.js route handlers
+
 ## Architecture Patterns
 
 ### State Management
@@ -151,7 +164,8 @@ docs/features/
 ├── kanban-board.md            # Task management
 ├── code-editor.md             # Code editing and AI inline edits
 ├── terminal.md                # Embedded shell sessions
-└── git-integration.md         # Version control workflow
+├── git-integration.md         # Version control workflow
+└── openkey-auth.md            # OpenKey + SIWE authentication
 ```
 
 ---

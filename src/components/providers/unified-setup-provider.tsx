@@ -45,9 +45,10 @@ export function UnifiedSetupProvider({ children }: { children: React.ReactNode }
       let agentConfigured = false;
       let apiKeyConfigured = false;
       let tunnelConfigured = false;
+      let usingSiweSession = false;
 
-      // Check all three in parallel
-      const [providerRes, apiKeyRes, tunnelRes] = await Promise.allSettled([
+      // Check setup state and the active auth method in parallel.
+      const [providerRes, apiKeyRes, tunnelRes, authRes] = await Promise.allSettled([
         fetch('/api/settings/provider').then(r => r.json()),
         fetch('/api/settings/api-access-key').then(r => r.json()),
         (async () => {
@@ -58,6 +59,14 @@ export function UnifiedSetupProvider({ children }: { children: React.ReactNode }
           const data = await res.json();
           return { completed: !!(data.tunnel_subdomain && data.tunnel_apikey) };
         })(),
+        fetch('/api/auth/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        }).then(async r => {
+          if (!r.ok) return null;
+          return r.json();
+        }),
       ]);
 
       if (providerRes.status === 'fulfilled') {
@@ -91,11 +100,29 @@ export function UnifiedSetupProvider({ children }: { children: React.ReactNode }
         tunnelConfigured = tunnelRes.value.completed;
       }
 
+      if (authRes.status === 'fulfilled') {
+        const authData = authRes.value;
+        usingSiweSession = !!(
+          authData?.valid === true &&
+          typeof authData?.siweAddress === 'string' &&
+          authData.siweAddress.length > 0
+        );
+      }
+
       setStatus({
         agentProvider: agentConfigured,
         apiAccessKey: apiKeyConfigured,
         remoteAccess: tunnelConfigured,
       });
+
+      // If the current browser session is authenticated via SIWE, skip the
+      // first-run workspace setup wizard. The user has already completed the
+      // auth gate, and prompting for API/tunnel setup here is not relevant to
+      // that sign-in path.
+      if (usingSiweSession) {
+        setChecked(true);
+        return;
+      }
 
       // Remote blocking: if non-localhost and no API key, force wizard open
       if (!local && !apiKeyConfigured) {

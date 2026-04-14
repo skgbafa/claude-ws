@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAuthVerificationService } from '@agentic-sdk/services/auth-verification';
-import { isSiweEnabled, sessionStore } from '@/lib/siwe-session';
+import {
+  isSiweEnabled,
+  sessionStore,
+  SIWE_SESSION_COOKIE_NAME,
+} from '@/lib/siwe-session';
 
 const authService = createAuthVerificationService(process.env.API_ACCESS_KEY);
 
@@ -24,7 +28,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check session cookie first
-    const sessionToken = request.cookies.get('cw-session')?.value;
+    const sessionToken = request.cookies.get(SIWE_SESSION_COOKIE_NAME)?.value;
     if (sessionToken) {
       const address = sessionStore.verify(sessionToken);
       if (address) {

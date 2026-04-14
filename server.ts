@@ -42,7 +42,11 @@ import { terminalManager } from './src/lib/terminal-manager';
 import { db, schema } from './src/lib/db';
 import { createLogger } from './src/lib/logger';
 import { safeCompare } from './src/lib/timing-safe-compare';
-import { sessionStore, isSiweEnabled } from './src/lib/siwe-session';
+import {
+  sessionStore,
+  isSiweEnabled,
+  SIWE_SESSION_COOKIE_NAME,
+} from './src/lib/siwe-session';
 
 const log = createLogger('Server');
 import { eq } from 'drizzle-orm';
@@ -133,9 +137,9 @@ app.prepare().then(async () => {
           const sessionToken = cookieHeader
             .split(';')
             .map((c) => c.trim())
-            .find((c) => c.startsWith('cw-session='));
+            .find((c) => c.startsWith(`${SIWE_SESSION_COOKIE_NAME}=`));
           if (sessionToken) {
-            const token = sessionToken.slice('cw-session='.length);
+            const token = sessionToken.slice(`${SIWE_SESSION_COOKIE_NAME}=`.length);
             const address = sessionStore.verify(token);
             if (address) {
               authenticated = true;

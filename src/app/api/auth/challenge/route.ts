@@ -1,5 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { challengeStore, isSiweEnabled } from '@/lib/siwe-session';
+import {
+  challengeStore,
+  createSiweChallengeCookieValue,
+  isSiweEnabled,
+  isValidSiweNonce,
+  SIWE_CHALLENGE_COOKIE_NAME,
+} from '@/lib/siwe-session';
+
+function getPublicOrigin(request: NextRequest): string {
+  const originHeader = request.headers.get('origin');
+  if (originHeader) {
+    return originHeader;
+  }
+
+  const forwardedProto = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim();
+  const forwardedHost = request.headers.get('x-forwarded-host')?.split(',')[0]?.trim();
+  const host = request.headers.get('host')?.split(',')[0]?.trim();
+  const nextUrl = request.nextUrl;
+
+  const protocol = forwardedProto || nextUrl.protocol.replace(/:$/, '') || 'https';
+  const resolvedHost = forwardedHost || host || nextUrl.host;
+
+  return `${protocol}://${resolvedHost}`;
+}
 
 /**
  * POST /api/auth/challenge
@@ -7,7 +30,7 @@ import { challengeStore, isSiweEnabled } from '@/lib/siwe-session';
  * Generate a SIWE challenge message for the given Ethereum address.
  * This endpoint is unprotected (no auth required).
  *
- * Body: { address: string }
+ * Body: { address: string, nonce?: string }
  * Returns: { nonce: string, message: string }
  */
 export async function POST(request: NextRequest) {
@@ -29,11 +52,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const nonce = challengeStore.create(address);
+    const clientNonce = body.nonce;
+    if (clientNonce !== undefined) {
+      if (typeof clientNonce !== 'string' || !isValidSiweNonce(clientNonce)) {
+        return NextResponse.json(
+          { error: 'nonce must be 8-128 characters and use only letters, numbers, periods, underscores, or hyphens' },
+          { status: 400 }
+        );
+      }
+      if (challengeStore.has(clientNonce)) {
+        return NextResponse.json(
+          { error: 'nonce is already in use' },
+          { status: 409 }
+        );
+      }
+    }
+
+    const nonce = challengeStore.create(address, clientNonce);
     const issuedAt = new Date().toISOString();
 
-    // Determine URI from request origin
-    const origin = request.headers.get('origin') || request.nextUrl.origin;
+    // Use the public origin so tunneled/proxied deployments do not emit
+    // localhost URIs inside the SIWE message.
+    const origin = getPublicOrigin(request);
 
     // EIP-4361 SIWE message format
     const message = [
@@ -49,8 +89,27 @@ export async function POST(request: NextRequest) {
       `Issued At: ${issuedAt}`,
     ].join('\n');
 
-    return NextResponse.json({ nonce, message });
-  } catch {
+    const response = NextResponse.json({ nonce, message });
+
+    const challengeCookie = createSiweChallengeCookieValue(address, nonce, message);
+    if (challengeCookie) {
+      response.cookies.set(SIWE_CHALLENGE_COOKIE_NAME, challengeCookie, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        path: '/api/auth',
+        maxAge: Math.floor(5 * 60),
+      });
+    }
+
+    return response;
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Challenge nonce already exists') {
+      return NextResponse.json(
+        { error: 'nonce is already in use' },
+        { status: 409 }
+      );
+    }
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
   }
 }
